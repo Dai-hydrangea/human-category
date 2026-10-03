@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>人類をいくつに分けるか</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #f5f3ee;
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    }
+    #container {
+      width: 100vw;
+      height: 100vh;
+      cursor: grab;
+    }
+    #container.grabbing { cursor: grabbing; }
+    svg { width: 100%; height: 100%; display: block; }
+
+    .ui-title {
+      position: fixed;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 11px;
+      color: #aaa;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+    .ui-hint {
+      position: fixed;
+      bottom: 14px;
+      right: 18px;
+      font-size: 10px;
+      color: #bbb;
+      pointer-events: none;
+    }
+    .ui-reset {
+      position: fixed;
+      bottom: 14px;
+      left: 18px;
+      font-size: 10px;
+      color: #999;
+      background: #fff;
+      border: 1px solid #ddd;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .ui-reset:hover { color: #555; border-color: #aaa; }
+    .ui-print {
+      position: fixed;
+      bottom: 14px;
+      left: 80px;
+      font-size: 10px;
+      color: #777;
+      background: #fff;
+      border: 1px solid #ddd;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .ui-print:hover { color: #333; border-color: #aaa; }
+    .ui-scroll {
+      position: fixed;
+      bottom: 14px;
+      left: 170px;
+      font-size: 10px;
+      color: #777;
+      background: #fff;
+      border: 1px solid #ddd;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .ui-scroll:hover { color: #333; border-color: #aaa; }
+
+    @media print {
+      .ui-title, .ui-hint, .ui-reset, .ui-print { display: none !important; }
+      body { background: #f5f3ee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      #container { width: 100vw; height: 100vh; }
+      svg { width: 100%; height: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="ui-title">人類をいくつに分けるか</div>
+  <div id="container"><svg id="chart"></svg></div>
+  <div class="ui-hint">スクロール: ズーム ／ ドラッグ: 移動</div>
+  <button class="ui-reset" id="resetBtn">リセット</button>
+  <button class="ui-print" id="printBtn">この範囲をPDF</button>
+  <button class="ui-scroll" id="scrollBtn">計算例 ↓</button>
+
+<script>
+// ─── 定数 ───────────────────────────────────────────
+const SVG_W   = 2600;
+const AX      = 160;
+const AW      = 2290;
+const AY      = 700;      // 軸Y（上に余裕を持たせる）
+const LOG_MAX = 10;
+
+const CARD_W     = 148;
+const CARD_H     = 50;
+const GAP        = 14;
+const LEVEL_STEP = 68;
+const PIN_BASE   = 32;
+
+const BG = '#f5f3ee';
+
+// 初期 viewBox（上下広め）
+const INIT_VX = -20, INIT_VY = -1000, INIT_VW = 2640, INIT_VH = 2600;
+
+// ─── 色（白背景用） ───────────────────────────────
+function hue(val) {
+  const t = Math.log10(Math.max(val, 1)) / LOG_MAX;
+  return Math.round((1 - t) * 200 + t * 0); // 200(青緑) → 0(赤)
+}
+function colorStroke(val) {
+  return `hsl(${hue(val)}, 58%, 42%)`;
+}
+function colorText(val) {
+  return `hsl(${hue(val)}, 65%, 30%)`;
+}
+
+// ─── データ（絞り込みなし）─────────────────────────
+const RAW = [
+  // ── 1 ──
+  { val: 1,     label: '人類',          sub: 'ホモ・サピエンス全員' },
+
+  // ── 2 ──
+  { val: 2,     label: '性別',          sub: '男 / 女' },
+  { val: 2,     label: '利き手',        sub: '右利き / 左利き' },
+  { val: 2,     label: '朝型 / 夜型',   sub: 'クロノタイプ' },
+  { val: 2,     label: '菜食 / 肉食',   sub: 'ベジタリアン区分' },
+  { val: 2,     label: 'Rh血液型',     sub: 'Rh陽性 / Rh陰性' },
+  { val: 2,     label: '内向 / 外向',   sub: 'Big5 外向性軸' },
+  { val: 2,     label: '既婚 / 未婚',   sub: 'マリタルステータス' },
+  { val: 2,     label: '都市 / 地方',   sub: '居住環境' },
+  { val: 2,     label: '有神 / 無神',   sub: '宗教観の最大区分' },
+  { val: 2,     label: '子あり / なし', sub: '親かどうか' },
+  { val: 2,     label: '喫煙 / 非喫煙', sub: '喫煙習慣' },
+
+  // ── 3〜5 ──
+  { val: 3,     label: '三大宗教',      sub: 'キリスト/イスラム/仏教' },
+  { val: 3,     label: '経済階層',      sub: '上流 / 中流 / 下流' },
+  { val: 4,     label: '血液型',        sub: 'A / B / O / AB' },
+  { val: 4,     label: '4気質',         sub: 'コレ/サン/フレ/メラ' },
+  { val: 4,     label: 'DISC',          sub: '行動スタイル4軸' },
+  { val: 4,     label: '季節生まれ',    sub: '春夏秋冬' },
+  { val: 5,     label: '五大宗教',      sub: 'キリ/イス/仏/ヒン/ユダ' },
+  { val: 5,     label: 'Big5の軸',      sub: '性格5因子（軸の数）' },
+  { val: 5,     label: '所得層',        sub: '5分位（低→高）' },
+
+  // ── 6〜11 ──
+  { val: 6,     label: '居住大陸',      sub: '6大陸で分ける' },
+  { val: 7,     label: '曜日生まれ',    sub: '何曜日に生まれたか' },
+  { val: 8,     label: '血液型×Rh',    sub: 'ABO+Rh 全8種' },
+  { val: 9,     label: 'エニアグラム',  sub: '9タイプ（動機による）' },
+  { val: 10,    label: '政治志向',      sub: '左翼→右翼 10段階' },
+
+  // ── 12〜24 ──
+  { val: 12,    label: '12星座',        sub: '西洋占星術' },
+  { val: 12,    label: '干支',          sub: '十二支（生まれ年）' },
+  { val: 12,    label: '誕生月',        sub: '1〜12月' },
+  { val: 16,    label: 'MBTI',          sub: '16タイプ' },
+  { val: 16,    label: 'ソシオニクス',  sub: 'ロシア版 16タイプ' },
+  { val: 24,    label: '誕生時間帯',    sub: '1日を24スロット' },
+  { val: 24,    label: '二十四節気',    sub: '生まれ季節の細分' },
+
+  // ── 25〜100 ──
+  { val: 30,    label: '気候帯',        sub: 'ケッペン気候区分' },
+  { val: 35,    label: '習い事',        sub: '主要な習い事の種類数' },
+  { val: 47,    label: '都道府県',      sub: '日本の居住地' },
+  { val: 50,    label: '米国50州',      sub: 'アメリカの居住地' },
+  { val: 60,    label: '六十干支',      sub: '干支×十干（60年）' },
+
+  // ── 100〜1000 ──
+  { val: 193,   label: '国籍',          sub: '国連加盟193カ国' },
+  { val: 250,   label: '年収1000万以上', sub: '日本人の約5%（全人類の1/250）' },
+  { val: 365,   label: '誕生日',        sub: '月日による分類' },
+  { val: 500,   label: '職種（大）',    sub: '厚労省・職業大分類' },
+  { val: 700,   label: '主要言語',      sub: '母語による分類' },
+  { val: 800,   label: '出身大学',      sub: '日本の大学・短大数' },
+
+  // ── 1000〜1万 ──
+  { val: 1700,  label: '市区町村',      sub: '日本の居住自治体' },
+  { val: 2700,  label: '年収3000万以上', sub: '日本人の約0.5%（全人類の1/2700）' },
+  { val: 5000,  label: '民族',          sub: '世界の民族グループ' },
+  { val: 5000,  label: '出身高校',      sub: '日本の高校（約5000）' },
+  { val: 7000,  label: '全言語',        sub: '母語（危機言語含む）' },
+  { val: 1e4,   label: '出身中学',      sub: '日本の中学（約1万）' },
+
+  // ── 1万〜10万 ──
+  { val: 2e4,   label: '出身小学校',    sub: '日本の小学校（約2万）' },
+  { val: 3.3e4, label: '年収1億以上',   sub: '日本人の約0.02%（全人類の1/3.3万）' },
+  { val: 2e4,   label: '居住都市',      sub: '世界の主要都市' },
+  { val: 5e4,   label: '職業詳細',      sub: '詳細職業分類' },
+
+  // ── 10万〜1000万 ──
+  { val: 3e5,   label: '苗字（日本）',  sub: '約30万種' },
+  { val: 9e5,   label: '苗字（世界）',  sub: '全世界 約90万種' },
+  { val: 1e6,   label: '名前の組合せ',  sub: '姓名組合せ（日本）' },
+  { val: 1e7,   label: '遺伝子型',      sub: 'SNP多型による個人差' },
+
+  // ── 1億〜 ──
+  { val: 1e8,   label: '指紋',          sub: '紋様パターンの個人差' },
+  { val: 1e9,   label: '声紋',          sub: '音声周波数の個人差' },
+  { val: 1e10,  label: '個人',          sub: 'あなた' },
+];
+
+const DATA = RAW.map(d => ({ ...d }));
+
+// ─── ユーティリティ ───────────────────────────────
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v));
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function txt(str, attrs, parent) {
+  const e = document.createElementNS(NS, 'text');
+  Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v));
+  e.textContent = str;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function logX(val) {
+  return AX + Math.log10(Math.max(val, 1)) / LOG_MAX * AW;
+}
+
+// ─── レイアウト ────────────────────────────────────
+function layout(data) {
+  data.forEach(d => { d.x = logX(d.val); });
+  const sorted = [...data].sort((a, b) => a.x - b.x);
+  const placed = [];
+  sorted.forEach(d => {
+    function hits(side, level) {
+      return placed.some(p =>
+        p.side === side && p.level === level &&
+        Math.abs(p.x - d.x) < CARD_W + GAP
+      );
+    }
+    let done = false;
+    for (let i = 0; i < 30 && !done; i++) {
+      const side  = i % 2 === 0 ? 'top' : 'bottom';
+      const level = Math.floor(i / 2);
+      if (!hits(side, level)) {
+        d.side = side; d.level = level;
+        placed.push({ x: d.x, side, level });
+        done = true;
+      }
+    }
+    if (!done) { d.side = 'top'; d.level = 15; }
+  });
+}
+
+// ─── 描画 ────────────────────────────────────────
+const svg = document.getElementById('chart');
+layout(DATA);
+
+// ① 副グリッド（2〜9 × 10^n の薄い縦線）
+for (let n = 0; n < 10; n++) {
+  [2,3,4,5,6,7,8,9].forEach(m => {
+    const x = logX(m * Math.pow(10, n));
+    el('line', { x1:x, y1:-1200, x2:x, y2:2200,
+      stroke:'#e0ddd7', 'stroke-width':0.6 }, svg);
+  });
+}
+
+// ② 主グリッド（10^n の縦線）
+const TICKS = [1,10,100,1e3,1e4,1e5,1e6,1e7,1e8,1e9,1e10];
+TICKS.forEach(t => {
+  const x = logX(t);
+  el('line', { x1:x, y1:-1200, x2:x, y2:2200,
+    stroke:'#ccc8c0', 'stroke-width':1 }, svg);
+});
+
+// ③ 軸線
+el('line', { x1:AX, y1:AY, x2:AX+AW, y2:AY,
+  stroke:'#888', 'stroke-width':2 }, svg);
+
+// ④ カード & ピン
+DATA.forEach(d => {
+  const isTop  = d.side === 'top';
+  const pinLen = PIN_BASE + d.level * LEVEL_STEP;
+  const cy     = isTop ? AY - pinLen - CARD_H/2 : AY + pinLen + CARD_H/2;
+  const py1    = isTop ? cy + CARD_H/2 : cy - CARD_H/2;
+  const py2    = isTop ? AY - 5 : AY + 5;
+  const cs     = colorStroke(d.val);
+  const ct     = colorText(d.val);
+
+  el('line', { x1:d.x, y1:py1, x2:d.x, y2:py2,
+    stroke:cs, 'stroke-width':1, opacity:0.5 }, svg);
+  el('circle', { cx:d.x, cy: isTop ? AY-4 : AY+4, r:3.5, fill:cs }, svg);
+
+  const g = el('g', {}, svg);
+  el('rect', {
+    x: d.x-CARD_W/2, y: cy-CARD_H/2,
+    width:CARD_W, height:CARD_H,
+    fill:'#ffffff', stroke:cs, 'stroke-width':1.2, rx:5
+  }, g);
+
+  // テキストはclip-pathで切る
+  const clipId = `clip-${Math.round(d.x)}-${d.level}-${d.side}`;
+  const defs = el('defs', {}, g);
+  const cp = el('clipPath', { id: clipId }, defs);
+  el('rect', {
+    x: d.x-CARD_W/2+6, y: cy-CARD_H/2,
+    width: CARD_W-12, height: CARD_H
+  }, cp);
+
+  const tg = el('g', { 'clip-path': `url(#${clipId})` }, g);
+  txt(d.label, {
+    x:d.x, y:cy-8,
+    fill:ct, 'font-size':15, 'font-weight':600,
+    'text-anchor':'middle', 'dominant-baseline':'middle'
+  }, tg);
+  txt(d.sub, {
+    x:d.x, y:cy+10,
+    fill:'#888', 'font-size':10,
+    'text-anchor':'middle', 'dominant-baseline':'middle'
+  }, tg);
+
+  const tt = document.createElementNS(NS, 'title');
+  const gs = d.val >= 1e10 ? '1人'
+           : `約 ${Math.round(1e10/d.val).toLocaleString()} 人/グループ`;
+  tt.textContent = `カテゴリ数: ${d.val.toLocaleString()}\n${gs}`;
+  g.appendChild(tt);
+});
+
+// ⑤ 目盛り（最前面 = カードの上に描く）
+const CAT_LBLS  = ['1','10','100','1千','1万','10万','100万','1千万','1億','10億','100億'];
+const SIZE_LBLS = ['100億人','10億人','1億人','1000万人','100万人','10万人','1万人','1000人','100人','10人','1人'];
+
+TICKS.forEach((t, i) => {
+  const x = logX(t);
+  el('line', { x1:x, y1:AY-10, x2:x, y2:AY+10, stroke:'#666', 'stroke-width':1.5 }, svg);
+
+  // 上側目盛り（カテゴリ数） - 白背景付き
+  const twTop = CAT_LBLS[i].length * 10 + 12;
+  el('rect', { x:x-twTop/2, y:AY-36, width:twTop, height:20,
+    fill:BG, rx:2 }, svg);
+  txt(CAT_LBLS[i], { x, y:AY-26,
+    fill:'#444', 'font-size':17, 'font-weight':500,
+    'text-anchor':'middle', 'dominant-baseline':'middle' }, svg);
+
+  // 下側目盛り（グループサイズ） - 白背景付き
+  const twBot = SIZE_LBLS[i].length * 9 + 12;
+  el('rect', { x:x-twBot/2, y:AY+20, width:twBot, height:18,
+    fill:BG, rx:2 }, svg);
+  txt(SIZE_LBLS[i], { x, y:AY+30,
+    fill:'#aaa', 'font-size':12,
+    'text-anchor':'middle', 'dominant-baseline':'middle' }, svg);
+});
+
+// 軸の方向ラベル
+txt('カテゴリ数 →', { x:AX, y:AY-50,
+  fill:'#999', 'font-size':15 }, svg);
+txt('← グループあたりの人数', { x:AX, y:AY+52,
+  fill:'#bbb', 'font-size':13 }, svg);
+
+// 端ラベル
+txt('人類', { x:AX-28, y:AY,
+  fill:colorText(1), 'font-size':26, 'font-weight':700,
+  'text-anchor':'end', 'dominant-baseline':'middle' }, svg);
+txt('個人', { x:AX+AW+28, y:AY,
+  fill:colorText(1e10), 'font-size':26, 'font-weight':700,
+  'text-anchor':'start', 'dominant-baseline':'middle' }, svg);
+
+// ─── ズーム・パン ─────────────────────────────────
+let vx = INIT_VX, vy = INIT_VY, vw = INIT_VW, vh = INIT_VH;
+
+function applyVB() {
+  svg.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
+}
+applyVB();
+
+const container = document.getElementById('container');
+container.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = e.deltaY > 0 ? 1.13 : 1/1.13;
+  const rect = svg.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) / rect.width  * vw + vx;
+  const my = (e.clientY - rect.top)  / rect.height * vh + vy;
+  vx = mx - (mx - vx) * factor;
+  vy = my - (my - vy) * factor;
+  vw *= factor; vh *= factor;
+  applyVB();
+}, { passive: false });
+
+let drag = null;
+container.addEventListener('mousedown', e => {
+  drag = { x: e.clientX, y: e.clientY };
+  container.classList.add('grabbing');
+});
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  const rect = svg.getBoundingClientRect();
+  vx -= (e.clientX - drag.x) / rect.width  * vw;
+  vy -= (e.clientY - drag.y) / rect.height * vh;
+  drag = { x: e.clientX, y: e.clientY };
+  applyVB();
+});
+window.addEventListener('mouseup', () => {
+  drag = null;
+  container.classList.remove('grabbing');
+});
+
+document.getElementById('scrollBtn').addEventListener('click', () => {
+  document.getElementById('explanation').scrollIntoView({ behavior: 'smooth' });
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  vx = INIT_VX; vy = INIT_VY; vw = INIT_VW; vh = INIT_VH;
+  applyVB();
+});
+
+document.getElementById('printBtn').addEventListener('click', () => {
+  // 今見えている範囲をそのまま印刷
+  window.print();
+});
+</script>
+
+<style>
+#explanation {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 64px 40px 100px;
+}
+#explanation h2 {
+  font-size: 22px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 10px;
+  letter-spacing: -0.01em;
+}
+#explanation .lead {
+  font-size: 14px;
+  color: #777;
+  line-height: 1.9;
+  margin-bottom: 44px;
+  border-left: 3px solid #ddd;
+  padding-left: 16px;
+}
+.ex-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 20px;
+  margin-bottom: 40px;
+}
+.ex-card {
+  background: #fff;
+  border: 1px solid #e4e1db;
+  border-radius: 10px;
+  padding: 28px 28px 24px;
+}
+.ex-card h3 {
+  font-size: 11px;
+  color: #bbb;
+  margin-bottom: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.ex-card .formula {
+  font-size: 13.5px;
+  color: #555;
+  line-height: 2.1;
+  margin-bottom: 16px;
+  font-feature-settings: "tnum";
+}
+.ex-card .formula span.cat {
+  display: inline-block;
+  background: #f0ede8;
+  border-radius: 4px;
+  padding: 1px 7px;
+  margin: 1px 2px;
+  font-size: 12px;
+  color: #444;
+}
+.ex-card .formula span.op {
+  color: #bbb;
+  margin: 0 2px;
+}
+.ex-card .result {
+  font-size: 20px;
+  font-weight: 700;
+  color: #c05050;
+  margin-bottom: 4px;
+}
+.ex-card .result-note {
+  font-size: 12px;
+  color: #999;
+}
+.disclaimer {
+  font-size: 11px;
+  color: #c0bdb8;
+  text-align: center;
+  line-height: 1.8;
+  margin-top: 44px;
+}
+</style>
+
+<div id="explanation">
+  <h2>カテゴリを組み合わせると、あなたはどれだけ希少か</h2>
+  <p class="lead">
+    各カテゴリが独立しているとすると、複数くぐった時の確率は掛け算になります。<br>
+    ただし「少ない側を選ぶとは限らない」というブレがある。O型（40%）の人もいれば AB型（10%）の人もいる。<br>
+    それでも——多数派の属性を選び続けても、<strong>10個前後で工業規格のシックスシグマ（30万分の1）を超えます。</strong>
+  </p>
+
+  <div class="ex-grid">
+
+    <div class="ex-card">
+      <h3>例 1 — 誕生日が同じ人は？</h3>
+      <div class="formula">
+        <span class="cat">誕生日</span> <span class="op">=</span> 1/365
+      </div>
+      <div class="result">世界に約 2,700 万人</div>
+      <div class="result-note">日本国内だと約 33 万人</div>
+    </div>
+
+    <div class="ex-card">
+      <h3>例 2 — 性別・血液型・誕生日が同じ人は？</h3>
+      <div class="formula">
+        <span class="cat">性別</span><span class="op">×</span><span class="cat">血液型</span><span class="op">×</span><span class="cat">誕生日</span><br>
+        = 1/2 × 1/4 × 1/365 <span class="op">=</span> 1/2,920
+      </div>
+      <div class="result">世界に約 270 万人</div>
+      <div class="result-note">都市ひとつ分。まだ出会える規模</div>
+    </div>
+
+    <div class="ex-card">
+      <h3>例 3 — 多数派を選び続けたら（O型・ESTJ）</h3>
+      <div class="formula">
+        <span class="cat">日本人</span><span class="op">×</span><span class="cat">男性</span><span class="op">×</span><span class="cat">O型</span><span class="op">×</span><span class="cat">MBTI ESTJ</span><span class="op">×</span><span class="cat">誕生日</span><br>
+        = 1/195 × 1/2 × 1/2.5 × 1/16 × 1/365<br>
+        <span class="op">=</span> 1/570,000,000
+      </div>
+      <div class="result">世界に約 14 人</div>
+      <div class="result-note">「よくある属性」でも 5 つで十数人に絞れる</div>
+    </div>
+
+    <div class="ex-card">
+      <h3>例 4 — シックスシグマに到達するのは何個目？</h3>
+      <div class="formula">
+        シックスシグマ水準 <span class="op">=</span> 約 <b>30 万分の 1</b><br><br>
+        MBTIレベル（1/16）のカテゴリを重ねると：<br>
+        3個 → 1/4,096（200万分の1）<br>
+        4個 → 1/65,536（12万分の1）まだ未達<br>
+        5個 → 1/1,048,576（<b>100万分の1 → 突破！</b>）
+      </div>
+      <div class="result">5 個でシックスシグマ超え</div>
+      <div class="result-note">粒度1/16のカテゴリを5つ組み合わせるだけ</div>
+    </div>
+
+    <div class="ex-card">
+      <h3>例 5 — 年収を加えると？</h3>
+      <div class="formula">
+        <span class="cat">日本人</span><span class="op">×</span><span class="cat">女性</span><span class="op">×</span><span class="cat">A型</span><span class="op">×</span><span class="cat">MBTI INFJ</span><span class="op">×</span><span class="cat">誕生日</span><span class="op">×</span><span class="cat">年収1000万以上</span><br>
+        = 1/195 × 1/2 × 1/4 × 1/50 × 1/365 × 1/250<br>
+        <span class="op">=</span> 1/712,500,000,000
+      </div>
+      <div class="result">世界に約 0.01 人</div>
+      <div class="result-note">希少な側を選ぶと 6 つで事実上ゼロ</div>
+    </div>
+
+    <div class="ex-card">
+      <h3>例 6 — 逆から見ると</h3>
+      <div class="formula">
+        MBTIだけでは<br>
+        <span class="cat">MBTI</span> <span class="op">=</span> 世界に <b>5 億人</b>が同タイプ<br><br>
+        「同じMBTIだから分かり合える」<br>は 5 億人を一括りにする粗さ
+      </div>
+      <div class="result">精度と孤独はトレードオフ</div>
+      <div class="result-note">細かく絞るほど、仲間が減っていく</div>
+    </div>
+
+  </div>
+
+  <p class="disclaimer">
+    ※ 各カテゴリが統計的に独立していると仮定した概算です。<br>
+    実際には相関がある組み合わせもあり（例：国籍と言語、性別と年収）、数値は参考値です。<br>
+    「少ない側を選ぶかのブレ」により、実際の絞り込み速度は人によって数倍〜数十倍の差があります。
+  </p>
+</div>
+
+</body>
+</html>
